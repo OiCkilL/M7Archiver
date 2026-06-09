@@ -1,0 +1,71 @@
+# Project reference material and agent config
+.workflow/reference/
+.workflow/.scratchpad/
+.omc/
+.omx/
+.xcodebuildmcp/
+.claude/
+.agents/
+.antigravitycli/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+xcuserdata/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# App/build outputs
+*.app
+*.appex
+*.dSYM/
+*.ipa
+*.pkg
+*.xcarchive
+
+# RTK per-project filter config
+.rtk/
+
+# Local config and secrets
+.env
+.env.*
+!.env.example
+*.local
+secret.txt
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Vendored ip7z build artifacts (script committed, output rebuilt locally)
+Vendor/7zip/build/
+Vendor/7zip/bin/
+
+# Vendored libarchive build artifacts
+Vendor/libarchive/build/
+Vendor/libarchive/lib/
+Vendor/libarchive/include/
