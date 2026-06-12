@@ -100,11 +100,6 @@ public struct ArchiveEngineSelector: Sendable {
         engines: [ArchiveEngineDefinition],
         requestedCapabilities: Set<ArchiveCapability>
     ) throws -> ArchiveEngineType {
-        // 7z files: prefer SevenZipEngine (in-process C++ bridge, not external CLI)
-        if format == .sevenZip,
-           supports(.sevenZip, in: engines, requestedCapabilities: requestedCapabilities) {
-            return .sevenZip
-        }
         if supports(.libarchive, in: engines, requestedCapabilities: requestedCapabilities) {
             return .libarchive
         }

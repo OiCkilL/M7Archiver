@@ -628,26 +628,7 @@ struct ArchiveWindowShell: View {
         .sheet(isPresented: $model.newArchiveDialogPresented, onDismiss: {
             model.handleNewArchiveDialogDismissed()
         }) {
-            CompressDialogView(
-                settings: model.settings,
-                onBeginCompress: {
-                    model.pendingCreateSubmissionInFlight = true
-                },
-                onOpenCompressionSettings: {
-                    SettingsWindowPresenter.shared.show(
-                        settings: model.settings,
-                        savedPasswords: model.savedPasswords,
-                        selectedTab: .compression
-                    )
-                }
-            ) { profile, password, encryptionMethod, saveInKeychain in
-                Task {
-                    await model.createArchiveFromNewPanel(
-                        profile: profile, password: password,
-                        encryptionMethod: encryptionMethod, saveInKeychain: saveInKeychain
-                    )
-                }
-            }
+            newArchiveDialog
         }
         .background(WindowCapturingView { window in
             WindowRegistry.shared.register(for: window, model: model)
@@ -664,6 +645,33 @@ struct ArchiveWindowShell: View {
         .onDisappear {
             model.cleanupTempRoots()
         }
+    }
+
+    @ViewBuilder
+    private var newArchiveDialog: some View {
+        CompressDialogView(
+            settings: model.settings,
+            onBeginCompress: {
+                model.pendingCreateSubmissionInFlight = true
+            },
+            onOpenCompressionSettings: {
+                SettingsWindowPresenter.shared.show(
+                    settings: model.settings,
+                    savedPasswords: model.savedPasswords,
+                    selectedTab: .compression
+                )
+            },
+            onCompress: { profile, password, encryptionMethod, saveInKeychain in
+                Task {
+                    await model.createArchiveFromNewPanel(
+                        profile: profile,
+                        password: password,
+                        encryptionMethod: encryptionMethod,
+                        saveInKeychain: saveInKeychain
+                    )
+                }
+            }
+        )
     }
 }
 
@@ -697,10 +705,16 @@ final class WindowRegistry {
         }
         return entries.first(where: { $0.window === keyWindow })?.model
     }
+    func isTransientEmptyWindow(_ window: NSWindow) -> Bool {
+        entries.removeAll { $0.window == nil }
+        guard let entry = entries.first(where: { $0.window === window }),
+              let model = entry.model else {
+            return false
+        }
+        return model.mode == .default_ && !model.isOpening && !model.session.hasArchive
+    }
 
 }
-
-// MARK: - Window Bridge (stable model ownership)
 
 /// Wraps `ArchiveWindowShell`, owning the `ArchiveWindowModel` as `@State`
 /// so it survives SwiftUI body re-evaluations.  Used by `WindowGroup`.

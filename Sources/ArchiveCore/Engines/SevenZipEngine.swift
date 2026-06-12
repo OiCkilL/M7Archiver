@@ -1,13 +1,30 @@
 import Foundation
 import CSevenZipBridge
 
-public enum SevenZipEngineError: Error, Equatable, Sendable {
+public enum SevenZipEngineError: Error, Equatable, Sendable, LocalizedError {
     case binaryNotFound(searchedPaths: [String])
     case processLaunchFailed(String)
     case processFailed(exitCode: Int32, stderr: String)
     case unsupportedFormat(ArchiveFormat)
     case unsupportedEncryption
     case missingSources
+
+    public var errorDescription: String? {
+        switch self {
+        case .binaryNotFound:
+            return "7-Zip helper was not found."
+        case .processLaunchFailed(let message):
+            return message
+        case .processFailed(_, let stderr):
+            return stderr.isEmpty ? "7-Zip operation failed." : stderr
+        case .unsupportedFormat(let format):
+            return "Creating \(format.rawValue) archives is not supported by the 7-Zip backend."
+        case .unsupportedEncryption:
+            return "A password is required to encrypt file names."
+        case .missingSources:
+            return "Select at least one item to archive."
+        }
+    }
 }
 
 /// `SevenZipEngine` shells out to the official ip7z `7zz` (or legacy `7z`)
@@ -53,6 +70,7 @@ public struct SevenZipEngine: ArchiveEngine {
     // MARK: - List / Metadata
 
     public func listContents(of archiveURL: URL, options: ArchiveOperationOptions = ArchiveOperationOptions()) async throws -> [ArchiveEntry] {
+        let archiveURL = Self.primaryVolumeURL(for: archiveURL)
         try checkCancellation(options)
         if let password = await password(for: archiveURL, operation: .listContents, provider: options.passwordProvider) {
             return try await listContentsWithCLI(of: archiveURL, password: password, options: options)
@@ -85,6 +103,7 @@ public struct SevenZipEngine: ArchiveEngine {
     }
 
     public func metadata(of archiveURL: URL, options: ArchiveOperationOptions = ArchiveOperationOptions()) async throws -> ArchiveMetadata {
+        let archiveURL = Self.primaryVolumeURL(for: archiveURL)
         try checkCancellation(options)
         if let password = await password(for: archiveURL, operation: .metadata, provider: options.passwordProvider) {
             let entries = try await listContentsWithCLI(of: archiveURL, password: password, options: options)
@@ -95,7 +114,7 @@ public struct SevenZipEngine: ArchiveEngine {
                 isMultiVolume: false,
                 entriesCount: entries.count,
                 uncompressedSize: entries.compactMap { $0.size }.reduce(0, +),
-                compressedSize: entries.compactMap { $0.packedSize }.reduce(0, +)
+                compressedSize: ArchiveMetadata.compressedSize(from: entries, archiveURL: archiveURL)
             )
         }
 
@@ -120,7 +139,7 @@ public struct SevenZipEngine: ArchiveEngine {
                         isMultiVolume: true,
                         entriesCount: entries.count,
                         uncompressedSize: entries.compactMap { $0.size }.reduce(0, +),
-                        compressedSize: entries.compactMap { $0.packedSize }.reduce(0, +)
+                        compressedSize: ArchiveMetadata.compressedSize(from: entries, archiveURL: archiveURL)
                     )
                 } catch {
                     if Self.looksEncryptionRelated(String(describing: error)) {
@@ -141,7 +160,7 @@ public struct SevenZipEngine: ArchiveEngine {
             isEncrypted: bridgeList.isEncrypted,
             entriesCount: entries.count,
             uncompressedSize: entries.compactMap { $0.size }.reduce(0, +),
-            compressedSize: entries.compactMap { $0.packedSize }.reduce(0, +)
+            compressedSize: ArchiveMetadata.compressedSize(from: entries, archiveURL: archiveURL)
         )
     }
 
@@ -152,6 +171,7 @@ public struct SevenZipEngine: ArchiveEngine {
     // MARK: - Test
 
     public func testArchive(_ archiveURL: URL, options: ArchiveOperationOptions = ArchiveOperationOptions()) async throws -> ArchiveOperationResult {
+        let archiveURL = Self.primaryVolumeURL(for: archiveURL)
         try checkCancellation(options)
         if let password = await password(for: archiveURL, operation: .testArchive, provider: options.passwordProvider) {
             return try await testArchiveWithCLI(archiveURL, password: password, options: options)
@@ -179,6 +199,7 @@ public struct SevenZipEngine: ArchiveEngine {
     // MARK: - Extract
 
     public func extract(_ archiveURL: URL, to destinationURL: URL, options: ArchiveOperationOptions = ArchiveOperationOptions()) async throws -> ArchiveOperationResult {
+        let archiveURL = Self.primaryVolumeURL(for: archiveURL)
         try checkCancellation(options)
         let tempDirectory = try ArchiveExtractionFinalizer.makeStagingDirectory(for: destinationURL)
         defer { try? FileManager.default.removeItem(at: tempDirectory) }
@@ -405,6 +426,10 @@ public struct SevenZipEngine: ArchiveEngine {
     public func cancel() async {}
 
     // MARK: - Helpers
+
+    private static func primaryVolumeURL(for archiveURL: URL) -> URL {
+        ArchiveTypeDetector.primarySevenZipVolumeURL(for: archiveURL)
+    }
 
     private func checkCancellation(_ options: ArchiveOperationOptions) throws {
         if Task.isCancelled || options.isCancelled?() == true {

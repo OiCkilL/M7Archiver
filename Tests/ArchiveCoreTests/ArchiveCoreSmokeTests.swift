@@ -53,6 +53,18 @@ final class ArchiveCoreSmokeTests: XCTestCase {
         XCTAssertEqual(detector.detectByExtension(fileName: "backup.tar.zst"), .tarZstd)
     }
 
+    func testArchiveTypeDetectorDetectsSevenZipSplitVolumesByName() {
+        let detector = ArchiveTypeDetector()
+
+        XCTAssertEqual(detector.detectByExtension(fileName: "file.7z.001"), .sevenZip)
+        XCTAssertEqual(detector.detectByExtension(fileName: "file.7z.099"), .sevenZip)
+        XCTAssertNil(detector.detectByExtension(fileName: "file.zip.001"))
+        XCTAssertEqual(
+            ArchiveTypeDetector.primarySevenZipVolumeURL(for: URL(fileURLWithPath: "/tmp/file.7z.012")).path,
+            "/tmp/file.7z.001"
+        )
+    }
+
     func testArchiveTypeDetectorDetects7zByMagic() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".bin")
         try Data([0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C, 0x00]).write(to: url)

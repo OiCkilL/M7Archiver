@@ -38,16 +38,19 @@ struct CompressDialogView: View {
     var onCompress: ((CompressionProfile, String?, String?, Bool) -> Void)?
     var onBeginCompress: (() -> Void)?
     var onOpenCompressionSettings: (() -> Void)?
+    var onCancel: (() -> Void)?
 
     init(
         settings: ArchiveSettings,
         onBeginCompress: (() -> Void)? = nil,
         onOpenCompressionSettings: (() -> Void)? = nil,
+        onCancel: (() -> Void)? = nil,
         onCompress: ((CompressionProfile, String?, String?, Bool) -> Void)? = nil
     ) {
         self.settings = settings
         self.onBeginCompress = onBeginCompress
         self.onOpenCompressionSettings = onOpenCompressionSettings
+        self.onCancel = onCancel
         self.onCompress = onCompress
         _draft = State(initialValue: Self.draft(for: settings))
     }
@@ -79,7 +82,10 @@ struct CompressDialogView: View {
     private var footer: some View {
         HStack {
             Spacer()
-            Button("Cancel", role: .cancel) { dismiss() }
+            Button("Cancel", role: .cancel) {
+                onCancel?()
+                dismiss()
+            }
             Button("Compress") { startCompress() }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)

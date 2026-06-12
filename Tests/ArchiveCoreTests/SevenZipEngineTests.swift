@@ -75,7 +75,7 @@ final class SevenZipEngineTests: XCTestCase {
         XCTAssertEqual(metadata.format, ArchiveFormat.sevenZip)
         XCTAssertEqual(metadata.entriesCount, 1)
         XCTAssertEqual(metadata.uncompressedSize, 100)
-        XCTAssertEqual(metadata.compressedSize, 0)
+        XCTAssertNil(metadata.compressedSize)
         XCTAssertTrue(metadata.isEncrypted)
         XCTAssertFalse(metadata.isMultiVolume)
     }

@@ -106,7 +106,15 @@ struct ArchiveWindowView: View {
                     Text("Open an archive, create a new one, or drag files here to begin.")
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .locked, .unlocking:
+            case .unlocking:
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("Opening archive…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .locked:
                 ArchiveLockView(
                     session: session,
                     savedPasswords: savedPasswords,

@@ -1,3 +1,5 @@
+import Foundation
+
 public struct ArchiveMetadata: Codable, Equatable, Sendable {
     public var format: ArchiveFormat
     public var comment: String?
@@ -29,5 +31,16 @@ public struct ArchiveMetadata: Codable, Equatable, Sendable {
         self.entriesCount = entriesCount
         self.uncompressedSize = uncompressedSize
         self.compressedSize = compressedSize
+    }
+
+    public static func compressedSize(from entries: [ArchiveEntry], archiveURL: URL) -> Int64? {
+        let packedSizes = entries.compactMap(\.packedSize)
+        if !packedSizes.isEmpty {
+            return packedSizes.reduce(0, +)
+        }
+        guard let fileSize = try? archiveURL.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+            return nil
+        }
+        return Int64(fileSize)
     }
 }

@@ -67,24 +67,17 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
         }
 
         let newState = await Task.detached(priority: .userInitiated) { () -> (PreviewState, [ArchiveTreeNode]) in
-            let engine: any ArchiveEngine
-            do {
-                engine = try ArchiveEngineSelector(selectionPolicy: .inProcessOnly)
-                    .makeEngine(for: format, requestedCapabilities: [.listContents])
-            } catch {
-                return (.error("Preview not available for \(format.rawValue.uppercased())"), [])
-            }
             let options = ArchiveOperationOptions()
 
             do {
-                let entries = try await engine.listContents(of: url, options: options)
+                let entries = try await Self.listPreviewEntries(format: format, archiveURL: url, options: options)
                 let hasEncrypted = entries.contains { $0.isEncrypted }
                 let meta = ArchiveMetadata(
                     format: format,
                     isEncrypted: hasEncrypted,
                     entriesCount: entries.count,
                     uncompressedSize: entries.compactMap { $0.size }.reduce(0, +),
-                    compressedSize: entries.compactMap { $0.packedSize }.reduce(0, +)
+                    compressedSize: ArchiveMetadata.compressedSize(from: entries, archiveURL: url)
                 )
                 if hasEncrypted {
                     return (.encrypted(meta), [])
@@ -113,6 +106,21 @@ final class PreviewViewController: NSViewController, QLPreviewingController {
     private nonisolated static func isEncryptionError(_ error: some Error) -> Bool {
         let text = String(describing: error).lowercased()
         return text.contains("password") || text.contains("encrypt")
+    }
+
+    private nonisolated static func listPreviewEntries(
+        format: ArchiveFormat,
+        archiveURL: URL,
+        options: ArchiveOperationOptions
+    ) async throws -> [ArchiveEntry] {
+        let engine = try ArchiveEngineSelector(selectionPolicy: .inProcessOnly)
+            .makeEngine(for: format, requestedCapabilities: [.listContents])
+        do {
+            return try await engine.listContents(of: archiveURL, options: options)
+        } catch {
+            guard format == .sevenZip else { throw error }
+            return try await SevenZipEngine().listContents(of: archiveURL, options: options)
+        }
     }
 
     private nonisolated static func buildTree(from entries: [ArchiveEntry]) -> [ArchiveTreeNode] {

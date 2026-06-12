@@ -8,6 +8,10 @@ public struct ArchiveTypeDetector: Sendable {
     }
 
     public func detect(fileURL: URL) throws -> ArchiveFormat? {
+        if Self.isSevenZipSplitVolume(fileName: fileURL.lastPathComponent) {
+            return .sevenZip
+        }
+
         if let compound = detectCompound(fileName: fileURL.lastPathComponent) {
             return compound.id
         }
@@ -20,6 +24,10 @@ public struct ArchiveTypeDetector: Sendable {
     }
 
     public func detectByExtension(fileName: String) -> ArchiveFormat? {
+        if Self.isSevenZipSplitVolume(fileName: fileName) {
+            return .sevenZip
+        }
+
         if let compound = detectCompound(fileName: fileName) {
             return compound.id
         }
@@ -52,6 +60,26 @@ public struct ArchiveTypeDetector: Sendable {
         }
 
         return nil
+    }
+
+    public static func isSevenZipSplitVolume(fileName: String) -> Bool {
+        let lowercased = fileName.lowercased()
+        guard lowercased.contains(".7z.") else { return false }
+        guard let suffix = lowercased.split(separator: ".").last,
+              suffix.count == 3,
+              suffix.allSatisfy({ $0.isNumber }),
+              let value = Int(suffix),
+              value > 0 else {
+            return false
+        }
+        return lowercased.hasSuffix(".7z.\(suffix)")
+    }
+
+    public static func primarySevenZipVolumeURL(for url: URL) -> URL {
+        guard isSevenZipSplitVolume(fileName: url.lastPathComponent) else { return url }
+        let name = url.lastPathComponent
+        let base = String(name.dropLast(4))
+        return url.deletingLastPathComponent().appendingPathComponent(base + ".001")
     }
 
     private func matches(_ signature: MagicSignature, in data: Data, baseOffset: Int) -> Bool {

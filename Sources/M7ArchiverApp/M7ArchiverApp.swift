@@ -38,13 +38,16 @@ final class M7ArchiverAppDelegate: NSObject, NSApplicationDelegate {
     var quickCompressRunner: (ArchiveFormat, [URL], URL?, ArchiveSettings) async -> Void = { format, sources, finderTarget, settings in
         await QuickCompressAction.run(format: format, sources: sources, finderTarget: finderTarget, settings: settings)
     }
+    var allowsTransientQuickActionTermination = true
 
     private var isBuildingMenu = false
     private var pendingURLs: [URL] = []
+    private var receivedExternalURL = false
     private var coalesceTimer: Timer?
     private weak var openRecentMenu: NSMenu?
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        receivedExternalURL = true
         pendingURLs.append(contentsOf: urls)
         coalesceTimer?.invalidate()
         coalesceTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
@@ -56,16 +59,19 @@ final class M7ArchiverAppDelegate: NSObject, NSApplicationDelegate {
 
     private func processPendingURLs() {
         guard !pendingURLs.isEmpty else { return }
-        // Wait for SwiftUI's initial window to register before routing URLs
-        if WindowRegistry.shared.activeModel == nil {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-                self?.processPendingURLs()
-            }
-            return
-        }
         let urls = pendingURLs
         pendingURLs = []
         openURLs(urls, context: context)
+    }
+
+    func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag else { return true }
+        M7ArchiverApp.createEmptyWindow(settings: context.settings, savedPasswords: context.savedPasswords)
+        return false
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -75,12 +81,23 @@ final class M7ArchiverAppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.ensureMainMenu(deferred: true)
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.openInitialWindowIfNeeded()
+        }
         NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
             object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.ensureMainMenu(deferred: true) }
         }
+    }
+
+    private func openInitialWindowIfNeeded() {
+        guard !receivedExternalURL else { return }
+        guard pendingURLs.isEmpty else { return }
+        guard WindowRegistry.shared.activeModel == nil else { return }
+        guard NSApp.windows.filter(\.isVisible).isEmpty else { return }
+        M7ArchiverApp.createEmptyWindow(settings: context.settings, savedPasswords: context.savedPasswords)
     }
 
     func ensureMainMenu(deferred: Bool = false) {
@@ -147,12 +164,20 @@ final class M7ArchiverAppDelegate: NSObject, NSApplicationDelegate {
         switch validated.action {
         case .addToZip:
             Task { @MainActor in
-                await quickCompressRunner(.zip, validated.files, validated.target, context.settings)
+                await runQuickCompressFromURL(.zip, appUrl: validated, context: context)
             }
         case .addTo7z:
             Task { @MainActor in
-                await quickCompressRunner(.sevenZip, validated.files, validated.target, context.settings)
+                await runQuickCompressFromURL(.sevenZip, appUrl: validated, context: context)
             }
+        case .addToArchive:
+            FinderAddToArchiveWindowPresenter.shared.show(
+                sources: validated.files,
+                finderTarget: validated.target,
+                settings: context.settings,
+                savedPasswords: context.savedPasswords
+            )
+            scheduleTransientEmptyWindowCleanup()
         default:
             let model: ArchiveWindowModel
             if let active = WindowRegistry.shared.activeModel, !active.isOccupied, !active.isOpening {
@@ -162,6 +187,48 @@ final class M7ArchiverAppDelegate: NSObject, NSApplicationDelegate {
             }
             model.handleValidatedAppURL(validated, autoExtract: context.settings.autoExtract)
         }
+    }
+
+    private func runQuickCompressFromURL(_ format: ArchiveFormat, appUrl: AppUrl, context: AppContext) async {
+        await quickCompressRunner(format, appUrl.files, appUrl.target, context.settings)
+        scheduleTransientEmptyWindowCleanup(shouldTerminate: true)
+    }
+
+    private func scheduleTransientEmptyWindowCleanup(shouldTerminate: Bool = false) {
+        runTransientEmptyWindowCleanup(shouldTerminate: shouldTerminate)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.runTransientEmptyWindowCleanup(shouldTerminate: shouldTerminate)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.runTransientEmptyWindowCleanup(shouldTerminate: shouldTerminate)
+        }
+    }
+
+    private func runTransientEmptyWindowCleanup(shouldTerminate: Bool) {
+        closeTransientEmptyWindowsIfNeeded()
+        if shouldTerminate {
+            terminateIfOnlyTransientWindowsRemain()
+        }
+    }
+
+    private func closeTransientEmptyWindowsIfNeeded() {
+        for window in NSApp.windows where WindowRegistry.shared.isTransientEmptyWindow(window) {
+            window.close()
+        }
+    }
+
+    private func terminateIfOnlyTransientWindowsRemain() {
+        guard allowsTransientQuickActionTermination, !isRunningUnderTests else { return }
+        let visibleWindows = NSApp.windows.filter { $0.isVisible }
+        guard visibleWindows.isEmpty || visibleWindows.allSatisfy({ WindowRegistry.shared.isTransientEmptyWindow($0) }) else {
+            return
+        }
+        NSApp.terminate(nil)
+    }
+
+    private var isRunningUnderTests: Bool {
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || Bundle.main.bundlePath.hasSuffix(".xctest")
     }
 
     private func makeSwiftRunExecutableForegroundApp() {
@@ -355,7 +422,7 @@ final class SettingsWindowPresenter {
         if let window = controller?.window {
             window.toolbar?.selectedItemIdentifier = NSToolbarItem.Identifier(selectionModel.selectedTab.rawValue)
             window.makeKeyAndOrderFront(nil)
-            NSApp.activate()
+            NSApp.activate(ignoringOtherApps: true)
             return
         }
 
@@ -389,7 +456,7 @@ final class SettingsWindowPresenter {
         let ctrl = NSWindowController(window: window)
         self.controller = ctrl
         ctrl.showWindow(nil)
-        NSApp.activate()
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
@@ -400,23 +467,9 @@ struct M7ArchiverApp: App {
     @NSApplicationDelegateAdaptor private var appDelegate: M7ArchiverAppDelegate
 
     var body: some Scene {
-        WindowGroup {
-            ArchiveWindowBridge(
-                settings: appDelegate.context.settings,
-                savedPasswords: appDelegate.context.savedPasswords,
-                onAppear: {
-                    appDelegate.ensureMainMenu(deferred: true)
-                }
-            )
-            .frame(minWidth: 720, minHeight: 420)
-            .handlesExternalEvents(
-                preferring: ["*"],
-                allowing: ["*"]
-            )
+        Settings {
+            EmptyView()
         }
-        .windowStyle(.titleBar)
-        .windowToolbarStyle(.unified)
-        .handlesExternalEvents(matching: ["*"])
     }
 
     // MARK: - Window factory
@@ -437,6 +490,7 @@ struct M7ArchiverApp: App {
         window.tabbingMode = .preferred
         window.setFrameAutosaveName(frameAutosaveName)
         window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
         WindowRegistry.shared.register(for: window, model: model)
         return model
     }
@@ -457,6 +511,7 @@ struct M7ArchiverApp: App {
         window.tabbingMode = .preferred
         window.setFrameAutosaveName("M7Archiver-" + url.lastPathComponent)
         window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
         WindowRegistry.shared.register(for: window, model: model)
         model.isOpening = true
         Task {
@@ -482,6 +537,7 @@ struct M7ArchiverApp: App {
         window.tabbingMode = .preferred
         sourceWindow.addTabbedWindow(window, ordered: .above)
         window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
         WindowRegistry.shared.register(for: window, model: model)
         model.isOpening = true
         Task {

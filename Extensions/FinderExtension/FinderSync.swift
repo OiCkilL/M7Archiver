@@ -111,10 +111,24 @@ final class M7ArchiverFinderSync: FIFinderSync {
         }
 
         let fileName = url.lastPathComponent.lowercased()
+        if isSevenZipSplitVolume(fileName) {
+            return true
+        }
         if archiveCompoundExtensions.contains(where: { fileName.hasSuffix(".\($0)") }) {
             return true
         }
         return archiveExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    private func isSevenZipSplitVolume(_ fileName: String) -> Bool {
+        guard fileName.contains(".7z."),
+              let suffix = fileName.split(separator: ".").last,
+              suffix.count == 3,
+              suffix.allSatisfy({ $0.isNumber }),
+              let value = Int(suffix) else {
+            return false
+        }
+        return value > 0 && fileName.hasSuffix(".7z.\(suffix)")
     }
 
     private func extractToFolderLabel(for items: [URL]) -> String {

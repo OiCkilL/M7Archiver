@@ -2,12 +2,23 @@ import Foundation
 import NaturalLanguage
 import CLibArchiveBridge
 
-public enum LibArchiveError: Error, Equatable, Sendable {
+public enum LibArchiveError: Error, Equatable, Sendable, LocalizedError {
     case cannotOpenArchive(String)
     case readFailed(String)
     case writeFailed(String)
     case unsupportedCreateFormat(ArchiveFormat)
     case missingSources
+
+    public var errorDescription: String? {
+        switch self {
+        case .cannotOpenArchive(let message), .readFailed(let message), .writeFailed(let message):
+            return message
+        case .unsupportedCreateFormat(let format):
+            return "Creating \(format.rawValue) archives is not supported by libarchive."
+        case .missingSources:
+            return "Select at least one item to archive."
+        }
+    }
 }
 
 public struct LibArchiveEngine: ArchiveEngine {
@@ -54,7 +65,7 @@ public struct LibArchiveEngine: ArchiveEngine {
             isMultiVolume: false,
             entriesCount: entries.count,
             uncompressedSize: entries.compactMap(\.size).reduce(0, +),
-            compressedSize: entries.compactMap(\.packedSize).reduce(0, +)
+            compressedSize: ArchiveMetadata.compressedSize(from: entries, archiveURL: archiveURL)
         )
     }
 
