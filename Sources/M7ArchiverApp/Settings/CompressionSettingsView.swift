@@ -8,6 +8,7 @@ struct CompressionSettingsView: View {
         SettingsPane(minWidth: 620, idealWidth: 700, maxWidth: 760) {
             SettingsGroup("After Compression") {
                 Toggle("Reveal in Finder after creating an archive", isOn: $settings.revealInFinderAfterCreate)
+                Toggle("Open the archive after creating it", isOn: $settings.openArchiveAfterCreate)
             }
 
             IgnoreRulesSettingsSection(settings: settings)

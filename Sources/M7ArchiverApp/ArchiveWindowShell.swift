@@ -332,6 +332,11 @@ final class ArchiveWindowModel {
 
     func handlePendingCreateOutcome(_ outcome: PendingCreateOutcome) {
         guard let request = pendingCreateRequest else { return }
+        // Single convergence point for all dialog outcomes (cancel/failure/success,
+        // including NSSavePanel cancel).  Reset the presented flag here so the
+        // standalone NSWindow flow can re-open on the next staging/Finder request;
+        // under the old .sheet binding SwiftUI cleared this automatically.
+        newArchiveDialogPresented = false
         switch request.source {
         case .staging:
             switch outcome {
@@ -381,6 +386,9 @@ final class ArchiveWindowModel {
                 await afterAppKitTransaction()
                 if settings.revealInFinderAfterCreate {
                     NSWorkspace.shared.activateFileViewerSelecting([first])
+                }
+                if settings.openArchiveAfterCreate {
+                    M7ArchiverApp.openArchiveInNewWindow(url: first, settings: settings, savedPasswords: savedPasswords)
                 }
             }
             handlePendingCreateOutcome(.success)
@@ -625,10 +633,16 @@ struct ArchiveWindowShell: View {
             onClearStaging: { model.clearStaging() },
             onCompressStaging: { model.presentStagingCompress() }
         )
-        .sheet(isPresented: $model.newArchiveDialogPresented, onDismiss: {
-            model.handleNewArchiveDialogDismissed()
-        }) {
-            newArchiveDialog
+        .onChange(of: model.newArchiveDialogPresented) { _, isPresented in
+            if isPresented {
+                CompressWindowPresenter.shared.show(
+                    model: model,
+                    settings: model.settings,
+                    savedPasswords: model.savedPasswords
+                )
+            } else {
+                CompressWindowPresenter.shared.dismiss(matching: model)
+            }
         }
         .background(WindowCapturingView { window in
             WindowRegistry.shared.register(for: window, model: model)
@@ -647,32 +661,6 @@ struct ArchiveWindowShell: View {
         }
     }
 
-    @ViewBuilder
-    private var newArchiveDialog: some View {
-        CompressDialogView(
-            settings: model.settings,
-            onBeginCompress: {
-                model.pendingCreateSubmissionInFlight = true
-            },
-            onOpenCompressionSettings: {
-                SettingsWindowPresenter.shared.show(
-                    settings: model.settings,
-                    savedPasswords: model.savedPasswords,
-                    selectedTab: .compression
-                )
-            },
-            onCompress: { profile, password, encryptionMethod, saveInKeychain in
-                Task {
-                    await model.createArchiveFromNewPanel(
-                        profile: profile,
-                        password: password,
-                        encryptionMethod: encryptionMethod,
-                        saveInKeychain: saveInKeychain
-                    )
-                }
-            }
-        )
-    }
 }
 
 // MARK: - Window Registry

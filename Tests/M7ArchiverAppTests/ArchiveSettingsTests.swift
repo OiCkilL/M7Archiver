@@ -123,6 +123,18 @@ final class ArchiveSettingsTests: XCTestCase {
         XCTAssertTrue(reloaded.revealInFinderAfterExtract)
     }
 
+    func testOpenArchiveAfterCreateDefaultsToTrueAndPersistsIndependently() {
+        let defaults = makeDefaults()
+        let initial = ArchiveSettings(defaults: defaults)
+        XCTAssertTrue(initial.openArchiveAfterCreate)
+        XCTAssertTrue(initial.revealInFinderAfterCreate)
+
+        initial.openArchiveAfterCreate = false
+        let reloaded = ArchiveSettings(defaults: defaults)
+        XCTAssertFalse(reloaded.openArchiveAfterCreate)
+        XCTAssertTrue(reloaded.revealInFinderAfterCreate)
+    }
+
     func testRestoreDefaultIgnoreRulesResetsCustomChanges() {
         let defaults = makeDefaults()
         let settings = ArchiveSettings(defaults: defaults)

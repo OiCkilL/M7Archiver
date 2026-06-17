@@ -76,6 +76,10 @@ final class ArchiveSettings {
         didSet { defaults.set(revealInFinderAfterCreate, forKey: Keys.revealInFinderAfterCreate) }
     }
 
+    var openArchiveAfterCreate: Bool {
+        didSet { defaults.set(openArchiveAfterCreate, forKey: Keys.openArchiveAfterCreate) }
+    }
+
     var defaultProfileID: String {
         didSet { defaults.set(defaultProfileID, forKey: Keys.defaultProfileID) }
     }
@@ -108,6 +112,7 @@ final class ArchiveSettings {
             ?? AutoExtractDestination()
         self.revealInFinderAfterExtract = defaults.object(forKey: Keys.revealInFinderAfterExtract) as? Bool ?? true
         self.revealInFinderAfterCreate = defaults.object(forKey: Keys.revealInFinderAfterCreate) as? Bool ?? true
+        self.openArchiveAfterCreate = defaults.object(forKey: Keys.openArchiveAfterCreate) as? Bool ?? true
         self.defaultProfileID = BuiltInCompressionProfiles.all.contains(where: { $0.id == defaultProfileID })
             ? defaultProfileID
             : BuiltInCompressionProfiles.fastZIP.id
@@ -228,6 +233,7 @@ final class ArchiveSettings {
         static let autoExtractDestination = "settings.autoExtractDestination"
         static let revealInFinderAfterExtract = "settings.revealInFinderAfterExtract"
         static let revealInFinderAfterCreate = "settings.revealInFinderAfterCreate"
+        static let openArchiveAfterCreate = "settings.openArchiveAfterCreate"
         static let defaultCompressionLevel = "settings.defaultCompressionLevel"
         static let defaultProfileID = "settings.defaultProfileID"
         static let ignoreRules = "settings.ignoreRules"

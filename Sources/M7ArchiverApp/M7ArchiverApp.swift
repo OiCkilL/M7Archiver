@@ -171,7 +171,7 @@ final class M7ArchiverAppDelegate: NSObject, NSApplicationDelegate {
                 await runQuickCompressFromURL(.sevenZip, appUrl: validated, context: context)
             }
         case .addToArchive:
-            FinderAddToArchiveWindowPresenter.shared.show(
+            CompressWindowPresenter.shared.show(
                 sources: validated.files,
                 finderTarget: validated.target,
                 settings: context.settings,
@@ -481,11 +481,12 @@ struct M7ArchiverApp: App {
         let hostingView = NSHostingView(rootView: shell)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
         window.title = "M7Archiver"
         window.toolbarStyle = .unified
+        window.titlebarAppearsTransparent = true
         window.contentView = hostingView
         window.tabbingMode = .preferred
         window.setFrameAutosaveName(frameAutosaveName)
@@ -502,11 +503,12 @@ struct M7ArchiverApp: App {
         let hostingView = NSHostingView(rootView: shell)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
         window.title = url.lastPathComponent
         window.toolbarStyle = .unified
+        window.titlebarAppearsTransparent = true
         window.contentView = hostingView
         window.tabbingMode = .preferred
         window.setFrameAutosaveName("M7Archiver-" + url.lastPathComponent)
@@ -528,11 +530,12 @@ struct M7ArchiverApp: App {
         let hostingView = NSHostingView(rootView: shell)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered, defer: false
         )
         window.title = url.lastPathComponent
         window.toolbarStyle = .unified
+        window.titlebarAppearsTransparent = true
         window.contentView = hostingView
         window.tabbingMode = .preferred
         sourceWindow.addTabbedWindow(window, ordered: .above)
