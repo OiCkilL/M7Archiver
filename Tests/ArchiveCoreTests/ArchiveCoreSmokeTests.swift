@@ -147,7 +147,7 @@ final class ArchiveCoreSmokeTests: XCTestCase {
         XCTAssertEqual(staging.deletingLastPathComponent().path, destination.path)
     }
 
-    func testArchiveExtractionFinalizerMergesDirectoriesAndRejectsSymlinks() throws {
+    func testArchiveExtractionFinalizerMergesDirectoriesAndRejectsSymlinks() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let staging = root.appendingPathComponent("staging", isDirectory: true)
@@ -159,7 +159,7 @@ final class ArchiveCoreSmokeTests: XCTestCase {
         try Data("new".utf8).write(to: staging.appendingPathComponent("folder/new.txt"))
         try Data("keep".utf8).write(to: destination.appendingPathComponent("folder/keep.txt"))
 
-        _ = try ArchiveExtractionFinalizer.finalize(
+        _ = try await ArchiveExtractionFinalizer.finalize(
             entries: [ArchiveEntry(path: "folder/new.txt")],
             from: staging,
             to: destination
@@ -177,18 +177,19 @@ final class ArchiveCoreSmokeTests: XCTestCase {
         try fileManager.createDirectory(at: staging.appendingPathComponent("link", isDirectory: true), withIntermediateDirectories: true)
         try Data("escape".utf8).write(to: staging.appendingPathComponent("link/escape.txt"))
 
-        XCTAssertThrowsError(
-            try ArchiveExtractionFinalizer.finalize(
+        do {
+            _ = try await ArchiveExtractionFinalizer.finalize(
                 entries: [ArchiveEntry(path: "link/escape.txt")],
                 from: staging,
                 to: destination
             )
-        ) { error in
+            XCTFail("Expected unsafeDestinationPath error")
+        } catch {
             XCTAssertEqual(error as? ArchiveExtractionFinalizationError, .unsafeDestinationPath("link/escape.txt"))
         }
     }
 
-    func testArchiveExtractionFinalizerIgnoresDuplicateEntriesAfterFirstMove() throws {
+    func testArchiveExtractionFinalizerIgnoresDuplicateEntriesAfterFirstMove() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let staging = root.appendingPathComponent("staging", isDirectory: true)
@@ -199,7 +200,7 @@ final class ArchiveCoreSmokeTests: XCTestCase {
 
         try Data("duplicate".utf8).write(to: staging.appendingPathComponent("same.txt"))
 
-        let outputURLs = try ArchiveExtractionFinalizer.finalize(
+        let outputURLs = try await ArchiveExtractionFinalizer.finalize(
             entries: [
                 ArchiveEntry(path: "same.txt"),
                 ArchiveEntry(path: "same.txt")
@@ -212,7 +213,7 @@ final class ArchiveCoreSmokeTests: XCTestCase {
         XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("same.txt")), encoding: .utf8), "duplicate")
     }
 
-    func testArchiveExtractionFinalizerRejectsDirectoryEntryCollidingWithFile() throws {
+    func testArchiveExtractionFinalizerRejectsDirectoryEntryCollidingWithFile() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let staging = root.appendingPathComponent("staging", isDirectory: true)
@@ -223,20 +224,21 @@ final class ArchiveCoreSmokeTests: XCTestCase {
 
         try Data("old".utf8).write(to: destination.appendingPathComponent("folder"))
 
-        XCTAssertThrowsError(
-            try ArchiveExtractionFinalizer.finalize(
+        do {
+            _ = try await ArchiveExtractionFinalizer.finalize(
                 entries: [ArchiveEntry(path: "folder", isDirectory: true)],
                 from: staging,
                 to: destination
             )
-        ) { error in
+            XCTFail("Expected unsafeDestinationPath error")
+        } catch {
             XCTAssertEqual(error as? ArchiveExtractionFinalizationError, .unsafeDestinationPath("folder"))
         }
 
         XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("folder")), encoding: .utf8), "old")
     }
 
-    func testArchiveExtractionFinalizerRollsBackPreviousFileReplacementOnFailure() throws {
+    func testArchiveExtractionFinalizerRollsBackPreviousFileReplacementOnFailure() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         let staging = root.appendingPathComponent("staging", isDirectory: true)
@@ -255,8 +257,8 @@ final class ArchiveCoreSmokeTests: XCTestCase {
             withDestinationURL: outside
         )
 
-        XCTAssertThrowsError(
-            try ArchiveExtractionFinalizer.finalize(
+        do {
+            _ = try await ArchiveExtractionFinalizer.finalize(
                 entries: [
                     ArchiveEntry(path: "replace.txt"),
                     ArchiveEntry(path: "link/escape.txt")
@@ -264,11 +266,231 @@ final class ArchiveCoreSmokeTests: XCTestCase {
                 from: staging,
                 to: destination
             )
-        ) { error in
+            XCTFail("Expected unsafeDestinationPath error")
+        } catch {
             XCTAssertEqual(error as? ArchiveExtractionFinalizationError, .unsafeDestinationPath("link/escape.txt"))
         }
 
         XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("replace.txt")), encoding: .utf8), "old")
+    }
+
+    func testFinalizeRenameStrategyProducesFinderStyleUniqueName() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let destination = root.appendingPathComponent("out", isDirectory: true)
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        try Data("old".utf8).write(to: destination.appendingPathComponent("file.txt"))
+        try Data("new".utf8).write(to: staging.appendingPathComponent("file.txt"))
+
+        _ = try await ArchiveExtractionFinalizer.finalize(
+            entries: [ArchiveEntry(path: "file.txt")],
+            from: staging,
+            to: destination,
+            conflictStrategy: .rename
+        )
+
+        XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("file.txt")), encoding: .utf8), "old")
+        XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("file 2.txt")), encoding: .utf8), "new")
+    }
+
+    func testFinalizeAskKeepBothMirrorsRename() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let destination = root.appendingPathComponent("out", isDirectory: true)
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        try Data("old".utf8).write(to: destination.appendingPathComponent("file.txt"))
+        try Data("new".utf8).write(to: staging.appendingPathComponent("file.txt"))
+
+        _ = try await ArchiveExtractionFinalizer.finalize(
+            entries: [ArchiveEntry(path: "file.txt")],
+            from: staging,
+            to: destination,
+            conflictStrategy: .ask,
+            onConflict: { _ in .keepBoth }
+        )
+
+        XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("file.txt")), encoding: .utf8), "old")
+        XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("file 2.txt")), encoding: .utf8), "new")
+    }
+
+    func testFinalizeAskReplaceOverwritesExisting() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let destination = root.appendingPathComponent("out", isDirectory: true)
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        try Data("old".utf8).write(to: destination.appendingPathComponent("file.txt"))
+        try Data("new".utf8).write(to: staging.appendingPathComponent("file.txt"))
+
+        _ = try await ArchiveExtractionFinalizer.finalize(
+            entries: [ArchiveEntry(path: "file.txt")],
+            from: staging,
+            to: destination,
+            conflictStrategy: .ask,
+            onConflict: { _ in .overwrite }
+        )
+
+        XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("file.txt")), encoding: .utf8), "new")
+        XCTAssertFalse(fileManager.fileExists(atPath: destination.appendingPathComponent("file 2.txt").path))
+    }
+
+    func testFinalizeAskStopThrowsAndRollsBackPriorFiles() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let destination = root.appendingPathComponent("out", isDirectory: true)
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        try Data("a".utf8).write(to: staging.appendingPathComponent("a.txt"))
+        try Data("b-new".utf8).write(to: staging.appendingPathComponent("b.txt"))
+        try Data("b-old".utf8).write(to: destination.appendingPathComponent("b.txt"))
+
+        do {
+            _ = try await ArchiveExtractionFinalizer.finalize(
+                entries: [ArchiveEntry(path: "a.txt"), ArchiveEntry(path: "b.txt")],
+                from: staging,
+                to: destination,
+                conflictStrategy: .ask,
+                onConflict: { _ in .stop }
+            )
+            XCTFail("Expected userStoppedExtraction")
+        } catch {
+            XCTAssertEqual(error as? ArchiveExtractionFinalizationError, .userStoppedExtraction)
+        }
+
+        // First-moved file rolled back (removed); existing b.txt untouched.
+        XCTAssertFalse(fileManager.fileExists(atPath: destination.appendingPathComponent("a.txt").path))
+        XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("b.txt")), encoding: .utf8), "b-old")
+    }
+
+    func testFinalizeAskWithoutCallbackThrows() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let destination = root.appendingPathComponent("out", isDirectory: true)
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        try Data("old".utf8).write(to: destination.appendingPathComponent("file.txt"))
+        try Data("new".utf8).write(to: staging.appendingPathComponent("file.txt"))
+
+        do {
+            _ = try await ArchiveExtractionFinalizer.finalize(
+                entries: [ArchiveEntry(path: "file.txt")],
+                from: staging,
+                to: destination,
+                conflictStrategy: .ask
+            )
+            XCTFail("Expected throw when .ask strategy has no onConflict callback")
+        } catch {
+            // Any throw is acceptable; the guard maps it to unsafeDestinationPath.
+            XCTAssertEqual(error as? ArchiveExtractionFinalizationError, .unsafeDestinationPath("file.txt"))
+        }
+    }
+
+    func testFinalizeRenameStrategyRenamesCollidingDirectoryAndChildren() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let destination = root.appendingPathComponent("out", isDirectory: true)
+        try fileManager.createDirectory(at: staging.appendingPathComponent("folder", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: staging.appendingPathComponent("folder/sub", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination.appendingPathComponent("folder", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        try Data("a".utf8).write(to: staging.appendingPathComponent("folder/a.txt"))
+        try Data("b".utf8).write(to: staging.appendingPathComponent("folder/sub/b.txt"))
+
+        _ = try await ArchiveExtractionFinalizer.finalize(
+            entries: [
+                ArchiveEntry(path: "folder", isDirectory: true),
+                ArchiveEntry(path: "folder/a.txt"),
+                ArchiveEntry(path: "folder/sub/b.txt")
+            ],
+            from: staging,
+            to: destination,
+            conflictStrategy: .rename
+        )
+
+        // Existing folder stays empty (untouched); new content under folder 2.
+        XCTAssertTrue(fileManager.fileExists(atPath: destination.appendingPathComponent("folder 2/a.txt").path))
+        XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("folder 2/a.txt")), encoding: .utf8), "a")
+        XCTAssertTrue(fileManager.fileExists(atPath: destination.appendingPathComponent("folder 2/sub/b.txt").path))
+        XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("folder 2/sub/b.txt")), encoding: .utf8), "b")
+        // Original folder remains, empty (merged nothing).
+        XCTAssertTrue(fileManager.fileExists(atPath: destination.appendingPathComponent("folder").path))
+        XCTAssertFalse(fileManager.fileExists(atPath: destination.appendingPathComponent("folder/a.txt").path))
+    }
+
+    func testFinalizeAskKeepBothRenamesCollidingDirectory() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let destination = root.appendingPathComponent("out", isDirectory: true)
+        try fileManager.createDirectory(at: staging.appendingPathComponent("folder", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination.appendingPathComponent("folder", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        try Data("new".utf8).write(to: staging.appendingPathComponent("folder/inside.txt"))
+
+        _ = try await ArchiveExtractionFinalizer.finalize(
+            entries: [
+                ArchiveEntry(path: "folder", isDirectory: true),
+                ArchiveEntry(path: "folder/inside.txt")
+            ],
+            from: staging,
+            to: destination,
+            conflictStrategy: .ask,
+            onConflict: { _ in .keepBoth }
+        )
+
+        XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("folder 2/inside.txt")), encoding: .utf8), "new")
+        XCTAssertFalse(fileManager.fileExists(atPath: destination.appendingPathComponent("folder/inside.txt").path))
+    }
+
+    func testFinalizeOverwriteStrategyMergesIntoExistingDirectory() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let destination = root.appendingPathComponent("out", isDirectory: true)
+        try fileManager.createDirectory(at: staging.appendingPathComponent("folder", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination.appendingPathComponent("folder", isDirectory: true), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        try Data("keep".utf8).write(to: destination.appendingPathComponent("folder/keep.txt"))
+        try Data("new".utf8).write(to: staging.appendingPathComponent("folder/new.txt"))
+
+        _ = try await ArchiveExtractionFinalizer.finalize(
+            entries: [
+                ArchiveEntry(path: "folder", isDirectory: true),
+                ArchiveEntry(path: "folder/new.txt")
+            ],
+            from: staging,
+            to: destination,
+            conflictStrategy: .overwrite
+        )
+
+        // Merged: existing keep.txt untouched, new.txt added alongside.
+        XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("folder/keep.txt")), encoding: .utf8), "keep")
+        XCTAssertEqual(String(data: try Data(contentsOf: destination.appendingPathComponent("folder/new.txt")), encoding: .utf8), "new")
+        XCTAssertFalse(fileManager.fileExists(atPath: destination.appendingPathComponent("folder 2").path))
     }
 
     func testIgnoreRuleMatcherFiltersMacOSJunkFiles() {

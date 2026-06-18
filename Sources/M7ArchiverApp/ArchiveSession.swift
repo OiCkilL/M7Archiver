@@ -383,7 +383,11 @@ public final class ArchiveSession {
     /// common formats in-process, `SevenZipEngine` handles 7z paths that
     /// need the official ip7z CLI, and the placeholder external RAR engine
     /// is rejected up front so we never silently produce empty output.
-    public func extract(to destinationFolder: URL) async -> ExtractionOutcome {
+    public func extract(
+        to destinationFolder: URL,
+        conflictStrategy: ArchiveExtractionConflictStrategy = .overwrite,
+        onConflict: (@Sendable (ArchiveExtractionConflict) async -> ArchiveExtractionConflictDecision)? = nil
+    ) async -> ExtractionOutcome {
         guard let archiveURL else {
             operationError = "No archive is open."
             return .missingArchive
@@ -459,7 +463,9 @@ public final class ArchiveSession {
                                 message: "Extracting… (\(current)/\(total))"
                             )
                         }
-                    }
+                    },
+                    conflictStrategy: conflictStrategy,
+                    onConflict: onConflict
                 )
                 return try await engine.extract(archiveURLCopy, to: destinationCopy, options: options)
             }
@@ -761,7 +767,7 @@ public final class ArchiveSession {
         }
 
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
-        let outputURLs = try ArchiveExtractionFinalizer.finalize(
+        let outputURLs = try await ArchiveExtractionFinalizer.finalize(
             entries: entries,
             from: stagingRoot,
             to: destination

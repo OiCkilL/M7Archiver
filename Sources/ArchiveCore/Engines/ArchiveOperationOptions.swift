@@ -19,6 +19,15 @@ public struct ArchiveOperationOptions: Sendable {
     /// thread/actor.
     public var onCreateProgress: (@Sendable (Double) -> Void)?
 
+    /// How to resolve a same-name destination file during finalization.
+    public var conflictStrategy: ArchiveExtractionConflictStrategy
+
+    /// Called once (on the first conflict) when the strategy is `.ask`; the
+    /// returned decision applies to every subsequent conflict in the same
+    /// operation.  May `await` (e.g. an `NSAlert.runModal()` on the main
+    /// actor); called from the finalizer's async context.
+    public var onConflict: (@Sendable (ArchiveExtractionConflict) async -> ArchiveExtractionConflictDecision)?
+
     public init(
         passwordProvider: ArchivePasswordProvider? = nil,
         requestedCapabilities: Set<ArchiveCapability> = [],
@@ -26,7 +35,9 @@ public struct ArchiveOperationOptions: Sendable {
         automaticEncodingPriority: [ArchiveEncoding]? = nil,
         isCancelled: (@Sendable () -> Bool)? = nil,
         onExtractProgress: (@Sendable (Int64, Int64) -> Void)? = nil,
-        onCreateProgress: (@Sendable (Double) -> Void)? = nil
+        onCreateProgress: (@Sendable (Double) -> Void)? = nil,
+        conflictStrategy: ArchiveExtractionConflictStrategy = .overwrite,
+        onConflict: (@Sendable (ArchiveExtractionConflict) async -> ArchiveExtractionConflictDecision)? = nil
     ) {
         self.passwordProvider = passwordProvider
         self.requestedCapabilities = requestedCapabilities
@@ -35,5 +46,7 @@ public struct ArchiveOperationOptions: Sendable {
         self.isCancelled = isCancelled
         self.onExtractProgress = onExtractProgress
         self.onCreateProgress = onCreateProgress
+        self.conflictStrategy = conflictStrategy
+        self.onConflict = onConflict
     }
 }

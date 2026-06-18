@@ -215,10 +215,12 @@ public struct SevenZipEngine: ArchiveEngine {
         }
         try checkCancellation(options)
 
-        let outputURLs = try ArchiveExtractionFinalizer.finalize(
+        let outputURLs = try await ArchiveExtractionFinalizer.finalize(
             entries: result.entries,
             from: tempDirectory,
-            to: destinationURL
+            to: destinationURL,
+            conflictStrategy: options.conflictStrategy,
+            onConflict: options.onConflict
         )
         try checkCancellation(options)
         return ArchiveOperationResult(

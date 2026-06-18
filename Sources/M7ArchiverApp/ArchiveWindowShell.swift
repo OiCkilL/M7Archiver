@@ -517,10 +517,15 @@ final class ArchiveWindowModel {
         panel.title = "Extract Files"
         panel.directoryURL = preferredPromptedExtractDirectory(for: request)
         guard panel.runModal() == .OK, let destination = panel.url else { return }
+        let decisionBox = ExtractionConflictDecisionBox()
         let dockToken = DockProgressController.shared.observe { [weak self] in
             self?.session.progress?.fraction
         }
-        let outcome = await session.extract(to: destination)
+        let outcome = await session.extract(
+            to: destination,
+            conflictStrategy: .ask,
+            onConflict: { conflict in await decisionBox.resolve(conflict) }
+        )
         _ = dockToken  // held until report clears the source
         switch outcome {
         case .completed:

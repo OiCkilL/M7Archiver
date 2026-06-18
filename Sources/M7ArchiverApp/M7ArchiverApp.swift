@@ -38,6 +38,15 @@ final class M7ArchiverAppDelegate: NSObject, NSApplicationDelegate {
     var quickCompressRunner: (ArchiveFormat, [URL], URL?, ArchiveSettings) async -> Void = { format, sources, finderTarget, settings in
         await QuickCompressAction.run(format: format, sources: sources, finderTarget: finderTarget, settings: settings)
     }
+    var headlessExtractRunner: (URL, URL?, Bool, ArchiveSettings, SavedPasswordsStore) async -> Void = { archiveURL, finderTarget, extractToSubfolder, settings, savedPasswords in
+        await HeadlessExtractAction.run(
+            archiveURL: archiveURL,
+            finderTarget: finderTarget,
+            extractToSubfolder: extractToSubfolder,
+            settings: settings,
+            savedPasswords: savedPasswords
+        )
+    }
     var allowsTransientQuickActionTermination = true
 
     private var isBuildingMenu = false
@@ -170,6 +179,20 @@ final class M7ArchiverAppDelegate: NSObject, NSApplicationDelegate {
         case .addTo7z:
             Task { @MainActor in
                 await runQuickCompressFromURL(.sevenZip, appUrl: validated, context: context)
+            }
+        case .extractHere:
+            Task { @MainActor in
+                for file in validated.files {
+                    await headlessExtractRunner(file, validated.target, false, context.settings, context.savedPasswords)
+                }
+                scheduleTransientEmptyWindowCleanup()
+            }
+        case .extractToFolder:
+            Task { @MainActor in
+                for file in validated.files {
+                    await headlessExtractRunner(file, validated.target, true, context.settings, context.savedPasswords)
+                }
+                scheduleTransientEmptyWindowCleanup()
             }
         case .addToArchive:
             CompressWindowPresenter.shared.show(
