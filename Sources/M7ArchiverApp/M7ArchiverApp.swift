@@ -77,6 +77,7 @@ final class M7ArchiverAppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         makeSwiftRunExecutableForegroundApp()
         ensureMainMenu()
+        DockProgressController.shared.start()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
             self?.ensureMainMenu(deferred: true)

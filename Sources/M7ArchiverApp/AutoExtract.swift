@@ -37,17 +37,27 @@ enum AutoExtract {
             destination = resolution.folderURL
         }
 
+        let dockToken = DockProgressController.shared.observe { [session] in
+            session.progress?.fraction
+        }
         let outcome = await session.extract(to: destination)
-        guard case .completed = outcome else {
+        // `dockToken` is held for the duration of the operation; `report`
+        // below clears the source, and the token's deinit is a no-op then.
+        _ = dockToken
+        switch outcome {
+        case .completed:
+            if settings.revealInFinderAfterExtract {
+                NSWorkspace.shared.activateFileViewerSelecting([destination])
+            }
+            DockProgressController.shared.report(.success, title: "Extraction Finished", body: destination.lastPathComponent)
+        case .cancelled:
+            DockProgressController.shared.report(.cancelled, title: "Extraction Cancelled", body: destination.lastPathComponent)
+        default:
             // 如果已经捕获了权限错误，状态栏会处理，这里不再弹窗
             if session.permissionError == nil {
                 presentFailure(outcome)
             }
-            return
-        }
-
-        if settings.revealInFinderAfterExtract {
-            NSWorkspace.shared.activateFileViewerSelecting([destination])
+            DockProgressController.shared.report(.failure, title: "Extraction Failed", body: destination.lastPathComponent)
         }
     }
 

@@ -106,14 +106,20 @@ enum QuickCompressAction {
         }
 
         let session = ArchiveSession(defaultEncoding: settings.defaultEncoding)
+        let dockToken = DockProgressController.shared.observe { [session] in
+            session.progress?.fraction
+        }
         let outcome = await session.createArchive(from: sources, to: destination, profile: profile)
+        _ = dockToken  // held until report clears the source
         switch outcome {
         case .completed(let outputURLs, _):
             if settings.revealInFinderAfterCreate, let first = outputURLs.first {
                 NSWorkspace.shared.activateFileViewerSelecting([first])
             }
+            DockProgressController.shared.report(.success, title: "Compression Finished", body: destination.lastPathComponent, hasWindow: false)
         case .failed(let message):
             presentAlert(title: "Compression Failed", message: message)
+            DockProgressController.shared.report(.failure, title: "Compression Failed", body: message, hasWindow: false)
         case .missingSelection:
             presentAlert(title: "Compression Failed", message: "Select at least one item to compress.")
         }

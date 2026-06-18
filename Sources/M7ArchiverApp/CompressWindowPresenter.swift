@@ -8,6 +8,7 @@ final class CompressWindowPresenter: NSObject, NSWindowDelegate {
 
     private var controller: NSWindowController?
     private var model: ArchiveWindowModel?
+    private var hostingController: NSHostingController<AnyView>?
 
     func show(
         sources: [URL]? = nil,
@@ -48,21 +49,27 @@ final class CompressWindowPresenter: NSObject, NSWindowDelegate {
             }
         ) { [weak self] profile, password, encryptionMethod, saveInKeychain in
             Task { @MainActor in
-                self?.controller?.close()
-                self?.controller = nil
-                self?.model = nil
+                guard let self else { return }
+                // Keep the window open and swap its content to a live progress
+                // view bound to the model, so large archives show real
+                // percentage (7-Zip) instead of vanishing silently.
+                self.hostingController?.rootView = AnyView(CompressProgressView(model: activeModel))
                 await activeModel.createArchiveFromNewPanel(
                     profile: profile,
                     password: password,
                     encryptionMethod: encryptionMethod,
                     saveInKeychain: saveInKeychain
                 )
+                self.dismiss(matching: activeModel)
             }
         }
         
-        // Use NSHostingController to allow SwiftUI to drive the window's size automatically
-        let hostingController = NSHostingController(rootView: rootView)
+        // Use NSHostingController to allow SwiftUI to drive the window's size automatically.
+        // rootView is wrapped in AnyView so the onCompress closure can swap it to
+        // CompressProgressView (a different root type) without re-creating the controller.
+        let hostingController = NSHostingController(rootView: AnyView(rootView))
         hostingController.sizingOptions = [.intrinsicContentSize]
+        self.hostingController = hostingController
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
@@ -106,6 +113,7 @@ final class CompressWindowPresenter: NSObject, NSWindowDelegate {
         let activeModel = model
         controller = nil
         model = nil
+        hostingController = nil
         activeModel?.handleNewArchiveDialogDismissed()
         activeController?.close()
     }

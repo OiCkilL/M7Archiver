@@ -137,6 +137,53 @@ final class SevenZipEngineIntegrationTests: XCTestCase {
         )
     }
 
+    /// Drives the streaming create path against the real `7zz` binary:
+    /// `-bsp1` progress must be parsed and forwarded via `onCreateProgress`
+    /// as a monotonic fraction sequence.  Uses hard-to-compress random data
+    /// so 7z runs long enough to emit multiple percentage updates.
+    func testStreamingCreateReportsRealPercentageProgress() async throws {
+        guard let bundled = Self.locateBundledBinary() else {
+            throw XCTSkip("Vendor/7zip/bin/7zz is not built.")
+        }
+        let streamingEngine = SevenZipEngine(
+            executableURL: bundled,
+            progressRunner: SevenZipDefaultRunner.runStreaming
+        )
+
+        // ~80 MiB of random bytes: incompressible, so 7z spends real time.
+        let source = workspace.appendingPathComponent("rand.bin")
+        var random = Data(count: 80 * 1_000_000)
+        _ = random.withUnsafeMutableBytes { buffer in
+            SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
+        }
+        try random.write(to: source)
+
+        let archive = workspace.appendingPathComponent("rand.7z")
+        let profile = CompressionProfile(name: "Stream 7z", format: .sevenZip, level: .normal, solid: false)
+
+        let collector = ProgressCollector()
+        let options = ArchiveOperationOptions(onCreateProgress: { fraction in
+            collector.append(fraction)
+        })
+
+        let result = try await streamingEngine.createArchive(
+            from: [source], to: archive, profile: profile,
+            password: nil, encryptionMethod: nil, options: options
+        )
+        XCTAssertEqual(result.outputURLs, [archive])
+        let fractions = collector.values
+        XCTAssertFalse(fractions.isEmpty, "expected real 7z progress to be reported")
+        // The final reported fraction should be near completion.  7-Zip does
+        // not always emit a final 100% before exiting (it may stop at ~93-97%
+        // depending on data and timing), so assert a loose lower bound.
+        XCTAssertGreaterThanOrEqual(fractions.last!, 0.85, "last fraction \(fractions.last!) should be near completion")
+        // Fractions must be within the valid range and non-decreasing.
+        for f in fractions {
+            XCTAssertGreaterThanOrEqual(f, 0.0)
+            XCTAssertLessThanOrEqual(f, 1.0)
+        }
+    }
+
     private static func locateBundledBinary() -> URL? {
         // Walk up from #file (this test source) to the repo root, then
         // append Vendor/7zip/bin/7zz. Resolve symlinks so the test still
@@ -155,5 +202,20 @@ final class SevenZipEngineIntegrationTests: XCTestCase {
             dir = parent
         }
         return nil
+    }
+}
+
+/// Thread-safe collector for `onCreateProgress` callbacks (invoked off the
+/// main actor from the streaming runner's pipe reader).  Uses an `NSLock`
+/// rather than an actor so the callback can append synchronously.
+private final class ProgressCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [Double] = []
+    func append(_ fraction: Double) {
+        lock.lock(); storage.append(fraction); lock.unlock()
+    }
+    var values: [Double] {
+        lock.lock(); defer { lock.unlock() }
+        return storage
     }
 }

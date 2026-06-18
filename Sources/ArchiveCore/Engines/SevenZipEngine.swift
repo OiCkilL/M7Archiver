@@ -39,6 +39,7 @@ public struct SevenZipEngine: ArchiveEngine {
     public let type: ArchiveEngineType = .sevenZip
     public let executableURL: URL
     private let runner: SevenZipRunner
+    private let progressRunner: SevenZipProgressRunner?
     private let listBridge: @Sendable (String) -> M7SevenZipEntryList
     private let testBridge: @Sendable (String) -> M7SevenZipEntryList
     private let extractBridge: @Sendable (String, String, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?, UnsafeMutablePointer<M7SevenZipExtractProgress>?) -> Int32
@@ -48,6 +49,7 @@ public struct SevenZipEngine: ArchiveEngine {
     public init(
         executableURL: URL? = nil,
         runner: SevenZipRunner? = nil,
+        progressRunner: SevenZipProgressRunner? = nil,
         listBridge: (@Sendable (String) -> M7SevenZipEntryList)? = nil,
         testBridge: (@Sendable (String) -> M7SevenZipEntryList)? = nil,
         extractBridge: (@Sendable (String, String, UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?, UnsafeMutablePointer<M7SevenZipExtractProgress>?) -> Int32)? = nil,
@@ -56,6 +58,7 @@ public struct SevenZipEngine: ArchiveEngine {
     ) {
         self.executableURL = executableURL ?? SevenZipBinaryResolver.defaultURL()
         self.runner = runner ?? SevenZipDefaultRunner.run
+        self.progressRunner = progressRunner
         self.listBridge = listBridge ?? { path in m7_7z_list(path) }
         self.testBridge = testBridge ?? { path in m7_7z_test(path) }
         self.extractBridge = extractBridge ?? { archive, destination, error, progress in
@@ -340,7 +343,7 @@ public struct SevenZipEngine: ArchiveEngine {
         guard !filteredSources.isEmpty else { throw SevenZipEngineError.missingSources }
         try checkCancellation(options)
 
-        var arguments: [String] = ["a", "-y", "-bd", "-t\(formatToken)"]
+        var arguments: [String] = ["a", "-y", "-bsp1", "-t\(formatToken)"]
         arguments.append("-mx\(profile.level.rawValue)")
 
         if profile.format == .sevenZip {
@@ -376,7 +379,12 @@ public struct SevenZipEngine: ArchiveEngine {
         arguments.append(archiveURL.path)
         arguments.append(contentsOf: filteredSources.map(\.path))
 
-        let result = try await runner(executableURL, arguments, passwordInput)
+        let result: SevenZipProcessResult
+        if let progressRunner {
+            result = try await progressRunner(executableURL, arguments, passwordInput, options.onCreateProgress)
+        } else {
+            result = try await runner(executableURL, arguments, passwordInput)
+        }
         try ensureSuccess(result)
         try checkCancellation(options)
 
@@ -534,11 +542,35 @@ public struct SevenZipEngine: ArchiveEngine {
 
     private func ensureSuccess(_ result: SevenZipProcessResult) throws {
         if result.exitCode != 0 {
-            let message = [result.stderr, result.stdout]
+            // `-bsp1` (create path) leaves progress/carriage-return/backspace
+            // bytes in stdout; strip them so error messages stay readable.
+            let stderr = Self.stripProgressNoise(from: result.stderr)
+            let stdout = Self.stripProgressNoise(from: result.stdout)
+            let message = [stderr, stdout]
                 .filter { !$0.isEmpty }
                 .joined(separator: "\n")
             throw SevenZipEngineError.processFailed(exitCode: result.exitCode, stderr: message)
         }
+    }
+
+    /// Removes 7-Zip `-bsp1` progress artifacts (backspace/carriage-return
+    /// overwrite sequences and `NN%` tokens) from captured output so error
+    /// messages stay readable.  Leaves normal log lines intact.
+    private static func stripProgressNoise(from string: String) -> String {
+        // Drop `NN%` tokens first, then collapse runs of backspace/\r that
+        // the percentage indicator used to overwrite the line.
+        guard let regex = try? NSRegularExpression(pattern: #"\s*\d{1,3}%"#) else { return string }
+        let stripped = regex.stringByReplacingMatches(
+            in: string,
+            range: NSRange(string.startIndex..., in: string),
+            withTemplate: ""
+        )
+        // Replace backspace sequences (a char followed by one or more \b) and
+        // lone carriage returns with nothing, then trim trailing whitespace.
+        let bsScrubbed = stripped
+            .replacingOccurrences(of: "\u{08}", with: "")
+            .replacingOccurrences(of: "\r", with: "")
+        return bsScrubbed.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func excludeArguments(for rules: [IgnoreRule]) -> [String] {

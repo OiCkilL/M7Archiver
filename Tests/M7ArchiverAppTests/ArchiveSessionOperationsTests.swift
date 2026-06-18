@@ -177,6 +177,44 @@ final class ArchiveSessionOperationsTests: XCTestCase {
     }
 
     @MainActor
+    func testCreateArchiveForwardsProgressFractionToSessionProgress() async throws {
+        let fileManager = FileManager.default
+        let workspace = fileManager.temporaryDirectory
+            .appendingPathComponent("M7Archiver-session-progress-")
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: workspace, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: workspace) }
+
+        let source = workspace.appendingPathComponent("a.txt")
+        try Data("content".utf8).write(to: source)
+        let destination = workspace.appendingPathComponent("out.zip")
+
+        let gate = BlockingPreviewGate()
+        let progressReported = expectation(description: "onCreateProgress invoked")
+
+        let engine = ProgressReportingEngineBlocking(fraction: 0.42, gate: gate) {
+            progressReported.fulfill()
+        }
+        let session = ArchiveSession(engineResolver: { _, _ in engine })
+
+        let createTask = Task { @MainActor in
+            await session.createArchive(from: [source], to: destination, profile: BuiltInCompressionProfiles.fastZIP)
+        }
+
+        await fulfillment(of: [progressReported], timeout: 1.0)
+        // While the engine is mid-create (blocked on the gate), the session
+        // must reflect the fraction reported via onCreateProgress.
+        XCTAssertEqual(session.progress?.operation, .create)
+        XCTAssertEqual(session.progress?.fraction, 0.42)
+
+        await gate.release()
+        let outcome = await createTask.value
+        if case .completed = outcome {} else { XCTFail("expected completed, got \(outcome)") }
+        // After completion the progress is cleared.
+        XCTAssertNil(session.progress)
+    }
+
+    @MainActor
     func testMaterializePreviewEntryUsesUnlockedPasswordWithoutMutatingOperationState() async throws {
         let fileManager = FileManager.default
         let workspace = fileManager.temporaryDirectory
@@ -733,6 +771,91 @@ private struct BlockingCreateEngine: ArchiveEngine {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
         throw CancellationError()
+    }
+
+    func statusStream() async -> AsyncStream<ArchiveEngineStatus> {
+        AsyncStream { continuation in
+            continuation.yield(.idle)
+            continuation.finish()
+        }
+    }
+
+    func cancel() async {}
+}
+
+/// Fake engine that reports a single create-progress fraction via
+/// `options.onCreateProgress`, so the session can be verified to forward the
+/// callback to `session.progress`.
+private struct ProgressReportingCreateEngine: ArchiveEngine {
+    let type: ArchiveEngineType = .libarchive
+    let reportedFraction: Double
+
+    init(reportedFraction: Double) {
+        self.reportedFraction = reportedFraction
+    }
+
+    func listContents(of archiveURL: URL, options: ArchiveOperationOptions) async throws -> [ArchiveEntry] { [] }
+
+    func metadata(of archiveURL: URL, options: ArchiveOperationOptions) async throws -> ArchiveMetadata {
+        ArchiveMetadata(format: .zip)
+    }
+
+    func testArchive(_ archiveURL: URL, options: ArchiveOperationOptions) async throws -> ArchiveOperationResult {
+        ArchiveOperationResult(operation: .testArchive, archiveURL: archiveURL)
+    }
+
+    func extract(_ archiveURL: URL, to destinationURL: URL, options: ArchiveOperationOptions) async throws -> ArchiveOperationResult {
+        ArchiveOperationResult(operation: .extract, archiveURL: archiveURL, destinationURL: destinationURL)
+    }
+
+    func createArchive(from sourceURLs: [URL], to archiveURL: URL, profile: CompressionProfile, password: String?, encryptionMethod: String?, options: ArchiveOperationOptions) async throws -> ArchiveOperationResult {
+        options.onCreateProgress?(reportedFraction)
+        return ArchiveOperationResult(operation: .create, archiveURL: archiveURL, outputURLs: [archiveURL])
+    }
+
+    func statusStream() async -> AsyncStream<ArchiveEngineStatus> {
+        AsyncStream { continuation in
+            continuation.yield(.idle)
+            continuation.finish()
+        }
+    }
+
+    func cancel() async {}
+}
+
+/// Fake engine that reports a create-progress fraction then blocks on a gate,
+/// letting the test observe `session.progress` mid-operation before releasing.
+private final class ProgressReportingEngineBlocking: ArchiveEngine {
+    let type: ArchiveEngineType = .libarchive
+    private let fraction: Double
+    private let gate: BlockingPreviewGate
+    private let onReported: @Sendable () -> Void
+
+    init(fraction: Double, gate: BlockingPreviewGate, onReported: @escaping @Sendable () -> Void) {
+        self.fraction = fraction
+        self.gate = gate
+        self.onReported = onReported
+    }
+
+    func listContents(of archiveURL: URL, options: ArchiveOperationOptions) async throws -> [ArchiveEntry] { [] }
+
+    func metadata(of archiveURL: URL, options: ArchiveOperationOptions) async throws -> ArchiveMetadata {
+        ArchiveMetadata(format: .zip)
+    }
+
+    func testArchive(_ archiveURL: URL, options: ArchiveOperationOptions) async throws -> ArchiveOperationResult {
+        ArchiveOperationResult(operation: .testArchive, archiveURL: archiveURL)
+    }
+
+    func extract(_ archiveURL: URL, to destinationURL: URL, options: ArchiveOperationOptions) async throws -> ArchiveOperationResult {
+        ArchiveOperationResult(operation: .extract, archiveURL: archiveURL, destinationURL: destinationURL)
+    }
+
+    func createArchive(from sourceURLs: [URL], to archiveURL: URL, profile: CompressionProfile, password: String?, encryptionMethod: String?, options: ArchiveOperationOptions) async throws -> ArchiveOperationResult {
+        options.onCreateProgress?(fraction)
+        onReported()
+        await gate.wait()
+        return ArchiveOperationResult(operation: .create, archiveURL: archiveURL, outputURLs: [archiveURL])
     }
 
     func statusStream() async -> AsyncStream<ArchiveEngineStatus> {

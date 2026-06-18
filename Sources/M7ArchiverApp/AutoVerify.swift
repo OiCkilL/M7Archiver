@@ -1,42 +1,35 @@
 import Foundation
 import AppKit
 
-/// Drives `ArchiveSession.verifyCurrentArchive()` and reports the outcome via
-/// a native `NSAlert`. Used by `M7ArchiverApp` URL handling to fulfill
-/// `m7archiver://testArchive` requests after the archive opens (and unlocks,
-/// if needed).
+/// Drives `ArchiveSession.verifyCurrentArchive()`.  The outcome is written to
+/// `session.verifyResult`, which the in-window status bar renders inline
+/// (icon + label + details popover) — identical to an in-app verify, so there
+/// is no modal `NSAlert`.  The Dock controller reports the terminal state for
+/// background notification/badge.  Used by `M7ArchiverApp` URL handling to
+/// fulfill `m7archiver://testArchive` requests after the archive opens (and
+/// unlocks, if needed).
 @MainActor
 enum AutoVerify {
     static func run(session: ArchiveSession, archiveURL: URL) async {
-        let outcome = await session.verifyCurrentArchive()
-        present(outcome, archiveURL: archiveURL)
-    }
-
-    private static func present(_ outcome: ArchiveSession.VerificationOutcome, archiveURL: URL) {
-        let alert = NSAlert()
-        alert.addButton(withTitle: "OK")
-
-        switch outcome {
-        case .completed(let details):
-            alert.alertStyle = .informational
-            alert.messageText = "\(archiveURL.lastPathComponent) passed verification"
-            alert.informativeText = details.joined(separator: "\n")
-        case .failed(let message, let details):
-            alert.alertStyle = .warning
-            alert.messageText = message
-            alert.informativeText = details.joined(separator: "\n")
-        case .missingArchive:
-            alert.alertStyle = .warning
-            alert.messageText = "Cannot verify archive"
-            alert.informativeText = "No archive is open."
-        case .locked:
-            alert.alertStyle = .warning
-            alert.messageText = "Cannot verify archive"
-            alert.informativeText = "Unlock the archive before verification."
-        case .cancelled:
-            break // silently ignore
+        let dockToken = DockProgressController.shared.observe { [session] in
+            session.progress?.fraction
         }
-
-        alert.runModal()
+        let outcome = await session.verifyCurrentArchive()
+        _ = dockToken  // held until report clears the source
+        let name = archiveURL.lastPathComponent
+        switch outcome {
+        case .completed:
+            // Result already surfaced via session.verifyResult in the status
+            // bar; the Dock report only adds a background notification.
+            DockProgressController.shared.report(.success, title: "Verification Passed", body: name)
+        case .failed(let message, _):
+            DockProgressController.shared.report(.failure, title: "Verification Failed", body: "\(name) — \(message)")
+        case .cancelled:
+            DockProgressController.shared.report(.cancelled, title: "Verification Cancelled", body: name)
+        case .missingArchive:
+            DockProgressController.shared.report(.failure, title: "Verification Failed", body: "No archive is open.")
+        case .locked:
+            DockProgressController.shared.report(.failure, title: "Verification Failed", body: "Unlock the archive before verification.")
+        }
     }
 }

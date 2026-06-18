@@ -371,11 +371,15 @@ final class ArchiveWindowModel {
         }
         await afterAppKitTransaction()
         isCompressing = true
+        let dockToken = DockProgressController.shared.observe { [weak self] in
+            self?.session.progress?.fraction
+        }
         let outcome = await session.createArchive(
             from: sources, to: destination, profile: profile,
             password: password, encryptionMethod: encryptionMethod
         )
         isCompressing = false
+        _ = dockToken  // released below after report; report clears sources
         pendingCreateSubmissionInFlight = false
         switch outcome {
         case .completed(let outputs, _):
@@ -392,9 +396,11 @@ final class ArchiveWindowModel {
                 }
             }
             handlePendingCreateOutcome(.success)
+            DockProgressController.shared.report(.success, title: "Compression Finished", body: destination.lastPathComponent)
         case .failed(let message):
             handlePendingCreateOutcome(.failure)
             alert("Compression Failed", message)
+            DockProgressController.shared.report(.failure, title: "Compression Failed", body: message)
         case .missingSelection:
             handlePendingCreateOutcome(.failure)
             alert("Compression Failed", "Select at least one item to compress.")
@@ -511,13 +517,22 @@ final class ArchiveWindowModel {
         panel.title = "Extract Files"
         panel.directoryURL = preferredPromptedExtractDirectory(for: request)
         guard panel.runModal() == .OK, let destination = panel.url else { return }
-        let outcome = await session.extract(to: destination)
-        guard case .completed = outcome else {
-            presentPromptedExtractionFailure(outcome)
-            return
+        let dockToken = DockProgressController.shared.observe { [weak self] in
+            self?.session.progress?.fraction
         }
-        if settings.revealInFinderAfterExtract {
-            NSWorkspace.shared.activateFileViewerSelecting([destination])
+        let outcome = await session.extract(to: destination)
+        _ = dockToken  // held until report clears the source
+        switch outcome {
+        case .completed:
+            if settings.revealInFinderAfterExtract {
+                NSWorkspace.shared.activateFileViewerSelecting([destination])
+            }
+            DockProgressController.shared.report(.success, title: "Extraction Finished", body: destination.lastPathComponent)
+        case .cancelled:
+            DockProgressController.shared.report(.cancelled, title: "Extraction Cancelled", body: destination.lastPathComponent)
+        default:
+            presentPromptedExtractionFailure(outcome)
+            DockProgressController.shared.report(.failure, title: "Extraction Failed", body: destination.lastPathComponent)
         }
     }
 
@@ -692,6 +707,14 @@ final class WindowRegistry {
             return entries.last(where: { $0.model != nil })?.model
         }
         return entries.first(where: { $0.window === keyWindow })?.model
+    }
+
+    /// All currently-live window models (windows that have not yet closed).
+    /// Used by the Dock progress controller to observe any in-flight operation
+    /// across multiple windows.
+    var allModels: [ArchiveWindowModel] {
+        entries.removeAll { $0.window == nil }
+        return entries.compactMap { $0.model }
     }
     func isTransientEmptyWindow(_ window: NSWindow) -> Bool {
         entries.removeAll { $0.window == nil }

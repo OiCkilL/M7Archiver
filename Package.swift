@@ -58,7 +58,7 @@ let package = Package(
             name: "M7ArchiverApp",
             dependencies: ["ArchiveCore", "ArchivePresentation"],
             path: "Sources/M7ArchiverApp",
-            exclude: ["M7ArchiverApp.entitlements", "Info.plist"]
+            exclude: ["M7ArchiverApp.entitlements", "Info.plist", "DockProgress/LICENSE"]
         ),
         .executableTarget(
             name: "QuickLookPreviewExtension",

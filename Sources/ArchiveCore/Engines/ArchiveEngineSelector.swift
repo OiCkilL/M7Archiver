@@ -85,7 +85,7 @@ public struct ArchiveEngineSelector: Sendable {
         case .libarchive:
             return LibArchiveEngine()
         case .sevenZip:
-            return SevenZipEngine()
+            return SevenZipEngine(progressRunner: SevenZipDefaultRunner.runStreaming)
         case .externalRar:
             return ExternalRarEngine(isConfigured: externalRarConfigured)
         }

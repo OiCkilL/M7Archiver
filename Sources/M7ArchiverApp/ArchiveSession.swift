@@ -896,7 +896,18 @@ public final class ArchiveSession {
         self.operationOutputURL = ownedOperationOutputURL
         do {
             let task = Task.detached(priority: .userInitiated) { () -> ArchiveOperationResult in
-                let options = ArchiveOperationOptions(isCancelled: { cancelFlag.isCancelled || Task.isCancelled })
+                let options = ArchiveOperationOptions(
+                    isCancelled: { cancelFlag.isCancelled || Task.isCancelled },
+                    onCreateProgress: { [weak self] fraction in
+                        Task { @MainActor in
+                            self?.progress = Progress(
+                                operation: .create,
+                                fraction: fraction,
+                                message: "Creating archive…"
+                            )
+                        }
+                    }
+                )
                 return try await engine.createArchive(
                     from: sourceCopies,
                     to: archiveCopy,
